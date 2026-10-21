@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
 import java.util.Map;
 
 import org.jboss.shrinkwrap.api.ShrinkWrap;
@@ -48,6 +49,30 @@ public class NetworkCaptureDevUiTest extends DevUIJsonRPCTest {
         assertNotNull(settings.get("elevation"));
         assertTrue(settings.get("applicationOnly").asBoolean());
         assertTrue(settings.get("excludeDevUi").asBoolean());
+        assertTrue(settings.get("interfaces").isEmpty());
+    }
+
+    @Test
+    public void interfacesIncludeLoopback() throws Exception {
+        JsonNode interfaces = executeJsonRPCMethod("interfaces");
+        JsonNode loopback = null;
+        for (JsonNode i : interfaces) {
+            if (i.get("loopback").asBoolean()) {
+                loopback = i;
+            }
+        }
+        assertNotNull(loopback, interfaces.toString());
+        assertTrue(loopback.get("up").asBoolean());
+        assertFalse(loopback.get("addresses").isEmpty(), loopback.toString());
+    }
+
+    @Test
+    public void unknownInterfaceIsRefused() throws Exception {
+        JsonNode result = executeJsonRPCMethod("startFromDevUi", Map.of("elevate", false, "applicationOnly", true,
+                "excludeDevUi", true, "interfaces", List.of("no-such-interface0")));
+        assertEquals("error", result.get("status").asString(), result.toString());
+        assertTrue(result.get("message").asString().contains("no-such-interface0"), result.toString());
+        assertFalse(executeJsonRPCMethod("status").get("running").asBoolean());
     }
 
     @Test
@@ -56,7 +81,8 @@ public class NetworkCaptureDevUiTest extends DevUIJsonRPCTest {
         assertFalse(status.get("running").asBoolean());
         assertEquals("", executeJsonRPCMethod("statusLabel").asString());
 
-        JsonNode result = executeJsonRPCMethod("startFromDevUi", Map.of("elevate", false, "applicationOnly", true, "excludeDevUi", true));
+        JsonNode result = executeJsonRPCMethod("startFromDevUi", Map.of("elevate", false, "applicationOnly", true,
+                "excludeDevUi", true, "interfaces", List.of()));
         String outcome = result.get("status").asString();
         assertTrue(outcome.equals("permission-required") || outcome.equals("started"), result.toString());
         if (outcome.equals("started")) {

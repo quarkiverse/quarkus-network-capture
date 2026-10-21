@@ -4,6 +4,7 @@ import '@vaadin/button';
 import '@vaadin/checkbox';
 import '@vaadin/grid';
 import '@vaadin/icon';
+import '@vaadin/multi-select-combo-box';
 import '@vaadin/progress-bar';
 import 'qui-alert';
 import { columnBodyRenderer } from '@vaadin/grid/lit.js';
@@ -72,7 +73,9 @@ export class QwcNetworkCapture extends QwcHotReloadElement {
         _paused: { state: true },
         _hideDevUi: { state: true },
         _applicationOnly: { state: true },
-        _excludeDevUi: { state: true }
+        _excludeDevUi: { state: true },
+        _interfaces: { state: true },
+        _selectedInterfaces: { state: true }
     };
 
     constructor() {
@@ -85,6 +88,9 @@ export class QwcNetworkCapture extends QwcHotReloadElement {
         this._hideDevUi = true;
         this._applicationOnly = true;
         this._excludeDevUi = true;
+        this._interfaces = [];
+        this._selectedInterfaces = [];
+        this._interfacesLoaded = false;
     }
 
     connectedCallback() {
@@ -114,8 +120,10 @@ export class QwcNetworkCapture extends QwcHotReloadElement {
             if (!this._status.running) {
                 this._applicationOnly = r.result.applicationOnly;
                 this._excludeDevUi = r.result.excludeDevUi;
+                this._selectedInterfaces = r.result.interfaces;
             }
         });
+        this._refreshInterfaces();
         this._refreshFiles();
         this.jsonRpc.status().then(r => {
             this._status = r.result;
@@ -192,6 +200,40 @@ export class QwcNetworkCapture extends QwcHotReloadElement {
         }
     }
 
+    // Containers starting add interfaces, so the list is refreshed whenever the picker opens.
+    _refreshInterfaces() {
+        this.jsonRpc.interfaces().then(r => {
+            this._interfaces = r.result;
+            this._interfacesLoaded = true;
+        });
+    }
+
+    // Only interfaces that are up can carry traffic, so only those are offered, plus any selected one that is not up
+    // or no longer exists, marked as such: a selection must never be hidden, or the page would capture on interfaces
+    // it does not show. Before the list has loaded, the selection (such as the configured default) is shown by name.
+    _interfaceItems() {
+        const items = this._interfaces.filter(i => i.up || this._selectedInterfaces.includes(i.name)).map(i => ({
+            name: i.name,
+            label: [i.name, i.loopback ? 'loopback' : null, i.up ? null : 'down', i.addresses.join(', ') || null]
+                .filter(p => p).join(' · ')
+        }));
+        for (const name of this._selectedInterfaces) {
+            if (!items.some(i => i.name === name)) {
+                items.push({ name: name, label: this._interfacesLoaded ? name + ' · not found' : name });
+            }
+        }
+        return items;
+    }
+
+    // The combo box also reports the selection it is handed on every render; only a real change may update the
+    // state, or each render would trigger the next.
+    _interfacesChanged(items) {
+        const names = items.map(i => i.name);
+        if (names.join(',') !== this._selectedInterfaces.join(',')) {
+            this._selectedInterfaces = names;
+        }
+    }
+
     _refreshFiles() {
         this.jsonRpc.listFiles().then(r => this._files = r.result);
     }
@@ -249,6 +291,12 @@ export class QwcNetworkCapture extends QwcHotReloadElement {
                     .checked=${this._applicationOnly} @checked-changed=${e => this._applicationOnly = e.detail.value}></vaadin-checkbox>
                 <vaadin-checkbox label="Exclude the Dev UI's and Dev MCP's own traffic"
                     .checked=${this._excludeDevUi} @checked-changed=${e => this._excludeDevUi = e.detail.value}></vaadin-checkbox>
+                <vaadin-multi-select-combo-box label="Interfaces" placeholder="All interfaces that are up" clear-button-visible
+                    style="width: 100%; max-width: 640px"
+                    .items=${this._interfaceItems()} item-label-path="label" item-id-path="name"
+                    .selectedItems=${this._interfaceItems().filter(i => this._selectedInterfaces.includes(i.name))}
+                    @opened-changed=${e => e.detail.value && this._refreshInterfaces()}
+                    @selected-items-changed=${e => this._interfacesChanged(e.detail.value)}></vaadin-multi-select-combo-box>
                 <div class="row">
                     <vaadin-button theme="primary" ?disabled=${this._busy} @click=${() => this._start(false)}>
                         <vaadin-icon icon="font-awesome-solid:play" slot="prefix"></vaadin-icon>
@@ -256,7 +304,9 @@ export class QwcNetworkCapture extends QwcHotReloadElement {
                     </vaadin-button>
                     ${this._busy ? html`<vaadin-progress-bar indeterminate style="width: 200px"></vaadin-progress-bar>` : ''}
                 </div>
-                <span class="muted">Captures on every network interface that is up. The application's traffic is kept whichever interface carries it.</span>
+                <span class="muted">${this._selectedInterfaces.length === 0
+                    ? "Captures on every network interface that is up. The application's traffic is kept whichever interface carries it."
+                    : 'Captures only on ' + this._selectedInterfaces.join(', ') + '. Traffic over any other interface, such as a container bridge or the LAN, is not captured.'}</span>
             </div>
         `;
     }
@@ -333,7 +383,8 @@ export class QwcNetworkCapture extends QwcHotReloadElement {
         this._error = null;
         this._permission = null;
         this._busy = true;
-        this.jsonRpc.startFromDevUi({ elevate: elevate, applicationOnly: this._applicationOnly, excludeDevUi: this._excludeDevUi }).then(r => {
+        this.jsonRpc.startFromDevUi({ elevate: elevate, applicationOnly: this._applicationOnly, excludeDevUi: this._excludeDevUi,
+            interfaces: this._selectedInterfaces }).then(r => {
             this._busy = false;
             const result = r.result;
             if (result.status === 'started') {

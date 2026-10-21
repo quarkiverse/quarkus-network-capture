@@ -1,8 +1,13 @@
 package io.quarkiverse.networkcapture.runtime.dev;
 
+import java.net.Inet6Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
@@ -14,6 +19,8 @@ import io.quarkus.runtime.annotations.JsonRpcDescription;
 import io.smallrye.common.os.OS;
 import io.smallrye.mutiny.Multi;
 import io.quarkiverse.networkcapture.Capture;
+import io.quarkiverse.networkcapture.CaptureInterface;
+import io.quarkiverse.networkcapture.CaptureInterfaces;
 import io.quarkiverse.networkcapture.CaptureOptions;
 import io.quarkiverse.networkcapture.CapturePermissionException;
 import io.quarkiverse.networkcapture.Elevation;
@@ -38,19 +45,70 @@ public class NetworkCaptureJsonRpcService {
     @JsonRpcDescription("Capture settings: platform, directory where capture files are written, elevation mechanism and setup hint")
     public Messages.Settings settings() {
         return new Messages.Settings(OS.current().name(), directory().toAbsolutePath().toString(), elevation().name(),
-                setupHint(), config.applicationOnly(), config.excludeDevUi());
+                setupHint(), config.applicationOnly(), config.excludeDevUi(), config.interfaces().orElse(List.of()));
     }
 
     @DevMCPEnableByDefault
-    @JsonRpcDescription("Start capturing the application's network traffic on all interfaces that are up, to a new pcapng file. "
+    @JsonRpcDescription("The network interfaces of this machine with their addresses and whether they are up, "
+            + "for choosing what 'start' captures on")
+    public List<Messages.InterfaceInfo> interfaces() {
+        List<Messages.InterfaceInfo> result = new ArrayList<>();
+        for (CaptureInterface i : CaptureInterfaces.list()) {
+            result.add(new Messages.InterfaceInfo(i.name(), i.index(), i.loopback(), i.up(), addresses(i.name())));
+        }
+        return result;
+    }
+
+    private static List<String> addresses(String name) {
+        try {
+            NetworkInterface ni = NetworkInterface.getByName(name);
+            return ni == null ? List.of()
+                    : ni.inetAddresses().map(NetworkCaptureJsonRpcService::text).toList();
+        } catch (SocketException e) {
+            return List.of();
+        }
+    }
+
+    // An address as people write it: IPv6 in the short form of RFC 5952, the longest run of zero groups as "::", and
+    // without the scope the JDK appends.
+    static String text(InetAddress address) {
+        String text = address.getHostAddress().replaceAll("%.*$", "");
+        if (!(address instanceof Inet6Address)) {
+            return text;
+        }
+        String[] groups = text.split(":");
+        int start = -1;
+        int length = 0;
+        for (int i = 0; i < groups.length; i++) {
+            int run = 0;
+            while (i + run < groups.length && groups[i + run].equals("0")) {
+                run++;
+            }
+            if (run > length && run > 1) {
+                start = i;
+                length = run;
+            }
+        }
+        if (start < 0) {
+            return text;
+        }
+        return String.join(":", Arrays.copyOfRange(groups, 0, start)) + "::"
+                + String.join(":", Arrays.copyOfRange(groups, start + length, groups.length));
+    }
+
+    @DevMCPEnableByDefault
+    @JsonRpcDescription("Start capturing the application's network traffic, on every interface that is up or on the ones named, to a new pcapng file. "
             + "Returns status 'started', 'permission-required' when the process lacks capture privileges, or 'error'. "
             + "This tool never runs the privileged helper: on 'permission-required', ask the user to press Start capture "
             + "on the Network Capture page of the Dev UI, or to run the one-time command in 'setupHint', then call it again. "
             + "Once started, exercise the application and read the packets with 'packets'")
     public Messages.StartResult start(
             @JsonRpcDescription("Keep only packets to or from this application's sockets") boolean applicationOnly,
-            @JsonRpcDescription("Leave the Dev UI's and Dev MCP's own traffic (their websocket and HTTP exchanges) out of the capture") boolean excludeDevUi) {
-        return doStart(false, applicationOnly, excludeDevUi);
+            @JsonRpcDescription("Leave the Dev UI's and Dev MCP's own traffic (their websocket and HTTP exchanges) out of the capture") boolean excludeDevUi,
+            @JsonRpcDescription("Names of the interfaces to capture on, as returned by 'interfaces'. Leave it out for the "
+                    + "configured default (quarkus.network-capture.interfaces, or every interface that is up when that is not set); "
+                    + "an empty list means every interface that is up") List<String> interfaces) {
+        return doStart(false, applicationOnly, excludeDevUi, interfaces);
     }
 
     /**
@@ -60,15 +118,20 @@ public class NetworkCaptureJsonRpcService {
      *
      * @param elevate whether to fall back to the privileged helper when the direct open is refused
      */
-    public Messages.StartResult startFromDevUi(boolean elevate, boolean applicationOnly, boolean excludeDevUi) {
-        return doStart(elevate, applicationOnly, excludeDevUi);
+    public Messages.StartResult startFromDevUi(boolean elevate, boolean applicationOnly, boolean excludeDevUi,
+            List<String> interfaces) {
+        return doStart(elevate, applicationOnly, excludeDevUi, interfaces);
     }
 
-    private Messages.StartResult doStart(boolean elevate, boolean applicationOnly, boolean excludeDevUi) {
+    private Messages.StartResult doStart(boolean elevate, boolean applicationOnly, boolean excludeDevUi,
+            List<String> interfaces) {
+        // Left out means the configured default, which is what an agent gets; the page always sends what it shows,
+        // where nothing selected reads "All interfaces that are up", so empty must mean exactly that.
+        List<String> names = interfaces == null ? config.interfaces().orElse(List.of()) : interfaces;
         CaptureOptions options = CaptureOptions.builder().snapLen(config.snapLen()).promiscuous(config.promiscuous())
                 .elevation(elevate ? elevation() : null).helperTimeout(config.helperTimeout()).build();
         try {
-            CaptureManager.INSTANCE.start(options, directory(), applicationOnly, excludeDevUi);
+            CaptureManager.INSTANCE.start(options, directory(), applicationOnly, excludeDevUi, names);
             return Messages.StartResult.started();
         } catch (CapturePermissionException e) {
             return new Messages.StartResult("permission-required", e.getMessage(), elevation().name(), setupHint());

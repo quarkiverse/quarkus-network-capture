@@ -40,7 +40,7 @@ public class NetworkCaptureDevMcpTest {
     @Test
     void captureToolsAreEnabledByDefault() throws Exception {
         String tools = call("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}");
-        for (String tool : new String[] { "settings", "start", "stop", "status", "packets", "listFiles" }) {
+        for (String tool : new String[] { "settings", "interfaces", "start", "stop", "status", "packets", "listFiles" }) {
             assertTrue(tools.contains("\"quarkus-network-capture_" + tool + "\""), tool + " missing from " + tools);
         }
         assertFalse(tools.contains("\"quarkus-network-capture_deleteFile\""), "deleting files must be opt-in");

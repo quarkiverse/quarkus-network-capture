@@ -2,6 +2,7 @@ package io.quarkiverse.networkcapture.runtime;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
 
 import io.quarkus.runtime.annotations.ConfigPhase;
 import io.quarkus.runtime.annotations.ConfigRoot;
@@ -58,6 +59,12 @@ public interface NetworkCaptureConfig {
      */
     @WithDefault("2m")
     Duration helperTimeout();
+
+    /**
+     * The interfaces a capture opens by default, by OS name, e.g. {@code lo} or {@code eth0}. When not set, a capture
+     * opens every interface that is up. The Dev UI page preselects these and lets you pick others for each capture.
+     */
+    Optional<List<String>> interfaces();
 
     /**
      * HTTP headers whose values the {@code packets} Dev MCP tool replaces with {@code [redacted]}, so that credentials

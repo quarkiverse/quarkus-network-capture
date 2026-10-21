@@ -65,13 +65,15 @@ public final class CaptureManager {
      *
      * @param applicationOnly keep only packets to or from a socket of this process
      * @param excludeDevUi leave out the Dev UI's websocket connections
+     * @param names the interfaces to capture on, by name; empty for every interface that is up
      * @throws CapturePermissionException when the direct open was refused and the options name no elevation
      */
-    public synchronized void start(CaptureOptions options, Path directory, boolean applicationOnly, boolean excludeDevUi) {
+    public synchronized void start(CaptureOptions options, Path directory, boolean applicationOnly, boolean excludeDevUi,
+            List<String> names) {
         if (session != null && session.isRunning()) {
             throw new CaptureException("A capture is already running");
         }
-        List<CaptureInterface> interfaces = CaptureInterfaces.listUp();
+        List<CaptureInterface> interfaces = names.isEmpty() ? CaptureInterfaces.listUp() : select(names);
         if (interfaces.isEmpty()) {
             throw new CaptureException("No network interface is up");
         }
@@ -106,6 +108,17 @@ public final class CaptureManager {
         LOG.infof("Capture started on %s, writing to %s%s",
                 handles.stream().map(h -> h.networkInterface().name()).collect(Collectors.joining(", ")), file,
                 skipped.isEmpty() ? "" : "; not opened: " + skipped);
+    }
+
+    // The named interfaces, in the OS's order. A name the OS does not report is an error rather than skipped, since
+    // it is most likely a typo and the capture would silently miss what the user asked for.
+    private static List<CaptureInterface> select(List<String> names) {
+        List<CaptureInterface> all = CaptureInterfaces.list();
+        List<String> unknown = names.stream().filter(n -> all.stream().noneMatch(i -> i.name().equals(n))).toList();
+        if (!unknown.isEmpty()) {
+            throw new CaptureException("No such network interface: " + String.join(", ", unknown));
+        }
+        return all.stream().filter(i -> names.contains(i.name())).toList();
     }
 
     public synchronized void stop() {

@@ -12,8 +12,19 @@ public final class Messages {
     private Messages() {
     }
 
+    /**
+     * @param interfaces the interfaces a capture opens by default, empty for every interface that is up
+     */
     public record Settings(String platform, String directory, String elevation, String setupHint, boolean applicationOnly,
-            boolean excludeDevUi) {
+            boolean excludeDevUi, List<String> interfaces) {
+    }
+
+    /**
+     * A network interface the page offers to capture on.
+     *
+     * @param addresses the interface's IP addresses, to tell interfaces apart
+     */
+    public record InterfaceInfo(String name, int index, boolean loopback, boolean up, List<String> addresses) {
     }
 
     // Outcome of a start request: started, permission-required or error.

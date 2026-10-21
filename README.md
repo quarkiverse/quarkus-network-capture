@@ -29,8 +29,12 @@ It works on Linux and macOS, needs Java 25, and does not need libpcap or any nat
 
    ![The Network Capture card in the Dev UI with its Capture link](docs/images/extension-card.png)
 
-3. Press **Start capture**. There is nothing to choose: the capture covers every network interface that is up, and
-   keeps whatever belongs to your application, whether it travels over loopback, a container bridge or the LAN.
+3. Press **Start capture**. By default the capture covers every network interface that is up, and keeps whatever
+   belongs to your application, whether it travels over loopback, a container bridge or the LAN. To capture on
+   particular interfaces only, pick them in **Interfaces** first; the picker lists each interface that is up with its
+   addresses.
+
+   ![The interface picker open, listing the loopback and wireless interfaces with their addresses](docs/images/interface-picker.png)
 
    The first time, you will probably see a notice that the application is not allowed to capture. Capturing needs a
    privilege that applications do not normally have. Press the **Start with sudo** (or **pkexec**, or on macOS the
@@ -90,10 +94,11 @@ Everything has a sensible default. The settings you are most likely to touch:
 | `quarkus.network-capture.application-only` | `true` | Keep only your application's traffic. Turn it off to capture everything on the interface. |
 | `quarkus.network-capture.exclude-dev-ui` | `true` | Leave the Dev UI's own traffic out of the file. |
 | `quarkus.network-capture.elevation` | `auto` | How the helper gets its privilege: `sudo`, `pkexec` or `osascript`. |
+| `quarkus.network-capture.interfaces` | every interface that is up | The interfaces a capture opens, e.g. `lo`; the page preselects them. |
 | `quarkus.network-capture.redact-headers` | `authorization`, `cookie`, `x-api-key` and similar | Headers whose values the Dev MCP `packets` tool hides from AI agents; `none` turns it off. |
 | `quarkus.network-capture.redact-query-parameters` | `access_token`, `code`, `api_key` and similar | Query parameters whose values the `packets` tool hides; `none` turns it off. |
 
-The two filtering options are also checkboxes on the page when you start a capture. Less common settings are
+The two filtering options and the interfaces are also on the page when you start a capture. Less common settings are
 `quarkus.network-capture.snap-len`, `quarkus.network-capture.promiscuous` and `quarkus.network-capture.helper-timeout`.
 
 ## Good to know
