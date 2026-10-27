@@ -5,12 +5,18 @@ import static io.quarkiverse.networkcapture.TestPackets.concat;
 import static io.quarkiverse.networkcapture.TestPackets.ethernet;
 import static io.quarkiverse.networkcapture.TestPackets.ipv4;
 import static io.quarkiverse.networkcapture.TestPackets.ipv6;
+import static io.quarkiverse.networkcapture.TestPackets.serverHello;
 import static io.quarkiverse.networkcapture.TestPackets.tcp;
 import static io.quarkiverse.networkcapture.TestPackets.tlsRecord;
 import static io.quarkiverse.networkcapture.TestPackets.udp;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayOutputStream;
+import java.util.Arrays;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import io.quarkiverse.networkcapture.LinkType;
@@ -67,7 +73,7 @@ class PacketSummaryTest {
                 ipv4(6, lo, lo, 20 + hello.length), tcp(50000, 8443, 0x18), hello));
         assertEquals("HTTPS", h.protocol());
         assertEquals("Client Hello (SNI=localhost, ALPN=h2, http/1.1)", h.info());
-        assertEquals("localhost", h.tls().serverName());
+        assertEquals("localhost", h.tls().clientHello().serverName());
 
         // no ALPN: the port decides
         byte[] pg = clientHello("db.internal");
@@ -165,6 +171,120 @@ class PacketSummaryTest {
     void truncatedPacketDoesNotThrow() {
         PacketSummary s = PacketSummary.decode(LinkType.ETHERNET, new byte[] { 1, 2, 3 });
         assertEquals("Malformed", s.protocol());
+    }
+
+    private static PacketSummary tls(byte[] payload, int sport, int dport) {
+        byte[] lo = { 127, 0, 0, 1 };
+        return PacketSummary.decode(LinkType.ETHERNET, concat(ethernet(0x0800), ipv4(6, lo, lo, 20 + payload.length),
+                tcp(sport, dport, 0x18), payload));
+    }
+
+    @Test
+    void clientHelloKeyExchangeDetails() {
+        byte[] hello = clientHello().serverName("localhost").alpn("h2").versions(0x0304, 0x0303).cipherSuites(0x1302, 0x1301, 0xC02F)
+                .groups(0x11EC, 0x1D, 0x17, 0x1a1a).keyShares(0x11EC, 0x1D).signatureAlgorithms(0x0403, 0x0807).build();
+        PacketSummary s = tls(hello, 50000, 8443);
+        assertEquals("Client Hello (SNI=localhost, ALPN=h2, key shares=X25519MLKEM768, x25519)", s.info());
+        TlsHandshake.ClientHello c = s.tls().clientHello();
+        assertEquals("localhost", c.serverName());
+        assertEquals(List.of("h2"), c.protocols());
+        assertEquals(List.of("TLS 1.3", "TLS 1.2"), c.versions());
+        assertEquals(List.of("TLS_AES_256_GCM_SHA384", "TLS_AES_128_GCM_SHA256", "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"),
+                c.cipherSuites());
+        assertEquals(List.of("X25519MLKEM768", "x25519", "secp256r1", "0x1a1a"), c.groups());
+        assertEquals(List.of("X25519MLKEM768", "x25519"), c.keyShares());
+        assertEquals(List.of("ecdsa_secp256r1_sha256", "ed25519"), c.signatureAlgorithms());
+        assertTrue(c.offersPostQuantum());
+        assertFalse(c.truncated());
+        assertNull(s.tls().serverHello());
+        assertNull(s.tls().quantumSafety());
+
+        // without supported_versions the legacy version is all that is offered
+        TlsHandshake.ClientHello old = tls(clientHello().keyShares(0x1D).build(), 50000, 8443).tls().clientHello();
+        assertEquals(List.of("TLS 1.2"), old.versions());
+        assertFalse(old.offersPostQuantum());
+    }
+
+    @Test
+    void clientHelloCutByTheSegment() {
+        byte[] hello = clientHello().serverName("localhost").groups(0x11EC, 0x1D).keyShares(0x11EC).build();
+        // cut inside the key share extension, which comes last
+        PacketSummary s = tls(Arrays.copyOf(hello, hello.length - 3), 50000, 8443);
+        TlsHandshake.ClientHello c = s.tls().clientHello();
+        assertEquals("Client Hello (SNI=localhost)", s.info());
+        assertEquals(List.of("X25519MLKEM768", "x25519"), c.groups());
+        assertEquals(List.of(), c.keyShares());
+        assertTrue(c.truncated());
+    }
+
+    @Test
+    void serverHelloWithPostQuantumKeyShare() {
+        byte[] hello = serverHello().versions(0x0304).cipherSuites(0x1302).keyShares(0x11EC).build();
+        PacketSummary s = tls(concat(hello, tlsRecord(0x14, new byte[] { 1 })), 8443, 50000);
+        assertEquals("Server Hello (TLS 1.3, TLS_AES_256_GCM_SHA384, key share X25519MLKEM768), Change Cipher Spec"
+                + "; quantum-safe key exchange", s.info());
+        TlsHandshake.ServerHello h = s.tls().serverHello();
+        assertEquals("TLS 1.3", h.version());
+        assertEquals("TLS_AES_256_GCM_SHA384", h.cipherSuite());
+        assertEquals("X25519MLKEM768", h.keyShareGroup());
+        assertFalse(h.retryRequest());
+        assertTrue(s.tls().quantumSafety().safe());
+        assertEquals("quantum-safe key exchange", s.tls().quantumSafety().reason());
+        assertNull(s.tls().clientHello());
+    }
+
+    @Test
+    void serverHelloWithClassicalKeyShare() {
+        PacketSummary s = tls(serverHello().versions(0x0304).cipherSuites(0x1301).keyShares(0x1D).build(), 8443, 50000);
+        assertEquals("Server Hello (TLS 1.3, TLS_AES_128_GCM_SHA256, key share x25519); not quantum safe: the server chose x25519",
+                s.info());
+        assertFalse(s.tls().quantumSafety().safe());
+        assertEquals("not quantum safe: the server chose x25519", s.tls().quantumSafety().reason());
+    }
+
+    @Test
+    void tls12ServerHello() {
+        PacketSummary s = tls(serverHello().cipherSuites(0xC030).build(), 8443, 50000);
+        assertEquals("Server Hello (TLS 1.2, TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384); not quantum safe: TLS 1.2 has no post-quantum key exchange",
+                s.info());
+        TlsHandshake.ServerHello h = s.tls().serverHello();
+        assertEquals("TLS 1.2", h.version());
+        assertNull(h.keyShareGroup());
+        assertFalse(s.tls().quantumSafety().safe());
+    }
+
+    @Test
+    void helloRetryRequest() {
+        PacketSummary s = tls(serverHello().versions(0x0304).cipherSuites(0x1301).keyShares(0x11EC).retryRequest().build(), 8443, 50000);
+        assertEquals("Hello Retry Request (TLS 1.3, TLS_AES_128_GCM_SHA256, asks for key share X25519MLKEM768)", s.info());
+        assertTrue(s.tls().serverHello().retryRequest());
+        assertEquals("X25519MLKEM768", s.tls().serverHello().keyShareGroup());
+        assertNull(s.tls().quantumSafety());
+    }
+
+    @Test
+    void serverHelloWithoutKeyShareHasNoVerdict() {
+        // a resumed session with psk_ke has no key share, so nothing can be said about its key exchange
+        PacketSummary s = tls(serverHello().versions(0x0304).cipherSuites(0x1301).build(), 8443, 50000);
+        assertEquals("Server Hello (TLS 1.3, TLS_AES_128_GCM_SHA256)", s.info());
+        assertNull(s.tls().quantumSafety());
+    }
+
+    @Test
+    void serverHelloCutByTheSegmentHasNoVerdict() {
+        byte[] hello = serverHello().versions(0x0304).cipherSuites(0x1301).keyShares(0x1D).build();
+        PacketSummary s = tls(Arrays.copyOf(hello, hello.length - 3), 8443, 50000);
+        assertEquals("Server Hello (TLS 1.3, TLS_AES_128_GCM_SHA256)", s.info());
+        TlsHandshake.ServerHello h = s.tls().serverHello();
+        assertTrue(h.truncated());
+        assertEquals("TLS 1.3", h.version()); // supported_versions precedes the cut key share
+        assertNull(h.keyShareGroup());
+        assertNull(s.tls().quantumSafety());
+
+        // cut before the extensions: the version is unknown, since TLS 1.3 is only announced there
+        PacketSummary early = tls(Arrays.copyOf(hello, 5 + 4 + 2 + 32 + 1 + 2), 8443, 50000);
+        assertEquals("Server Hello (TLS_AES_128_GCM_SHA256)", early.info());
+        assertNull(early.tls().serverHello().version());
     }
 
 }

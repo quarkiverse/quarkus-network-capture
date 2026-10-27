@@ -52,6 +52,13 @@ It works on Linux and macOS, needs Java 25, and does not need libpcap or any nat
 
    ![The details of a JSON response: status, headers, and the body pretty printed and highlighted](docs/images/packet-details.png)
 
+   For TLS, the list shows the handshake, and the Server Hello row tells you whether the connection is **quantum
+   safe**: it is when the server chose a post-quantum key exchange group such as `X25519MLKEM768`, and when it is
+   not, the row says why, for instance that the client offered the group but the server chose `x25519`. Click the
+   Client Hello or Server Hello to see the versions, cipher suites, key exchange groups and key shares offered and
+   chosen. The Quarkus [TLS registry guide](https://quarkus.io/guides/tls-registry-reference) explains how to turn
+   post-quantum key exchange on.
+
 5. Press **Stop capture**. The file is listed on the page with a download link, and it is also on disk under
    `target/pcap/`. Open it in Wireshark.
 
@@ -103,7 +110,8 @@ The two filtering options and the interfaces are also on the page when you start
 
 ## Good to know
 
-- **TLS traffic is captured encrypted.** Wireshark shows the handshake, not the content.
+- **TLS traffic is captured encrypted.** Wireshark and the packet list show the handshake, not the content. The
+  quantum-safety verdict only covers the key exchange; certificates and signatures are classical everywhere today.
 - **The prompt can be avoided.** On Linux, give the JDK you run dev mode with the capture capability once:
   `sudo setcap cap_net_raw+ep "$(readlink -f "$(which java)")"`. On macOS, Wireshark's installer sets up ChmodBPF,
   which grants your user access to the capture devices.

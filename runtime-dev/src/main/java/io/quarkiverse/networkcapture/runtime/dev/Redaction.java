@@ -55,7 +55,7 @@ final class Redaction {
         Messages.ExchangeRef exchange = x == null ? null
                 : new Messages.ExchangeRef(x.id(), url(x.request()), x.isRequest(), x.requestNo());
         return new Messages.PacketRow(row.no(), row.time(), row.interfaceName(), row.source(), row.destination(),
-                row.protocol(), row.length(), url(row.info()), http, exchange, row.devUi());
+                row.protocol(), row.length(), url(row.info()), http, row.tls(), exchange, row.devUi());
     }
 
     // The text with the values of sensitive query parameters replaced.

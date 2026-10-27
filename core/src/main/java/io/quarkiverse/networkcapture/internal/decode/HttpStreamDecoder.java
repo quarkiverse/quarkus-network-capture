@@ -17,7 +17,8 @@ import io.quarkiverse.networkcapture.LinkType;
  * <p>
  * TLS connections are remembered from their Client Hello, so that the segments that follow, which cannot be
  * recognised on their own because they are encrypted or start in the middle of a record, are reported as the same
- * protocol with the server name the client asked for.
+ * protocol with the server name the client asked for. The Server Hello's verdict on the key exchange is worded with
+ * what the client offered, and is carried by every later segment of the connection.
  * <p>
  * Requests and responses are also paired into {@link HttpExchange}s: a response, and the body parts that follow it,
  * refer to the oldest request on the connection that is still unanswered.
@@ -73,10 +74,25 @@ public final class HttpStreamDecoder {
     };
     private long nextExchange = 1;
 
-    // The protocol and server name of each TLS connection, from its Client Hello.
-    private final Map<String, String[]> tls = new LinkedHashMap<>(16, 0.75f, true) {
+    // What is known about one TLS connection: from its Client Hello, then from its Server Hello.
+    private static final class Tls {
+        final String protocol;
+        final TlsHandshake.ClientHello clientHello;
+        TlsHandshake.QuantumSafety verdict;
+
+        Tls(String protocol, TlsHandshake.ClientHello clientHello) {
+            this.protocol = protocol;
+            this.clientHello = clientHello;
+        }
+
+        String serverName() {
+            return clientHello == null ? null : clientHello.serverName();
+        }
+    }
+
+    private final Map<String, Tls> tls = new LinkedHashMap<>(16, 0.75f, true) {
         @Override
-        protected boolean removeEldestEntry(Map.Entry<String, String[]> eldest) {
+        protected boolean removeEldestEntry(Map.Entry<String, Tls> eldest) {
             return size() > MAX_CONNECTIONS;
         }
     };
@@ -96,15 +112,27 @@ public final class HttpStreamDecoder {
         String connection = summary.source().compareTo(summary.destination()) < 0
                 ? summary.source() + "|" + summary.destination()
                 : summary.destination() + "|" + summary.source();
-        if (summary.tls() != null) {
-            tls.put(connection, new String[] { summary.protocol(), summary.tls().serverName() });
+        if (summary.tls() != null && summary.tls().clientHello() != null) {
+            tls.put(connection, new Tls(summary.protocol(), summary.tls().clientHello()));
         }
-        String[] known = tls.get(connection);
+        Tls known = tls.get(connection);
         if (known != null && segment.payloadLength() > 0) {
-            String info = encrypted && summary.tls() == null ? summary.info() : tcp ? "Continuation Data" : null;
-            if (info != null) {
-                summary = new PacketSummary(summary.source(), summary.destination(), known[0],
-                        info + (known[1] == null ? "" : " (" + known[1] + ")"), summary.sourcePort(), summary.destinationPort());
+            String suffix = known.serverName() == null ? "" : " (" + known.serverName() + ")";
+            TlsHandshake.ServerHello serverHello = summary.tls() == null ? null : summary.tls().serverHello();
+            if (serverHello != null) {
+                TlsHandshake.QuantumSafety verdict = TlsHandshake.QuantumSafety.of(serverHello, known.clientHello);
+                known.verdict = verdict;
+                summary = new PacketSummary(summary.source(), summary.destination(), known.protocol,
+                        TlsRecords.withVerdict(summary.info(), summary.tls().quantumSafety(), verdict) + suffix,
+                        summary.sourcePort(), summary.destinationPort(), null, null, null,
+                        new TlsHandshake(null, serverHello, verdict));
+            } else {
+                String info = encrypted && summary.tls() == null ? summary.info() : tcp ? "Continuation Data" : null;
+                if (info != null) {
+                    summary = new PacketSummary(summary.source(), summary.destination(), known.protocol, info + suffix,
+                            summary.sourcePort(), summary.destinationPort(), null, null, null,
+                            known.verdict == null ? null : new TlsHandshake(null, null, known.verdict));
+                }
             }
         }
         if (encrypted || known != null) {

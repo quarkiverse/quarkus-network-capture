@@ -15,6 +15,7 @@ import io.quarkiverse.networkcapture.internal.decode.HttpMessage;
 import io.quarkiverse.networkcapture.internal.decode.HttpRequestFilter;
 import io.quarkiverse.networkcapture.internal.decode.HttpStreamDecoder;
 import io.quarkiverse.networkcapture.internal.decode.PacketSummary;
+import io.quarkiverse.networkcapture.internal.decode.TlsHandshake;
 
 
 /**
@@ -54,6 +55,7 @@ final class PacketRows implements PacketListener {
                 || devUiExchanges.excludes(summary);
         Messages.HttpDetails http = summary.http() != null ? http(summary.http())
                 : summary.httpBody() != null ? bodyPart(summary.httpBody()) : null;
+        Messages.TlsDetails tls = summary.tls() == null ? null : tls(summary.tls());
         long startNanos = startedAt.getEpochSecond() * 1_000_000_000L + startedAt.getNano();
         synchronized (this) {
             long no = next++;
@@ -68,7 +70,7 @@ final class PacketRows implements PacketListener {
             }
             rows.addLast(new Messages.PacketRow(no, String.format("%.6f", (packet.timestampNanos() - startNanos) / 1e9),
                     captured.networkInterface().name(), summary.source(), summary.destination(), summary.protocol(),
-                    packet.originalLength(), summary.info(), http, exchange, devUi));
+                    packet.originalLength(), summary.info(), http, tls, exchange, devUi));
             if (rows.size() > CAPACITY) {
                 rows.removeFirst();
                 evicted++;
@@ -109,6 +111,18 @@ final class PacketRows implements PacketListener {
         String text = part.asText(BODY_TEXT_LIMIT);
         return new Messages.BodyPartDetails(true, part.message(), part.chunked(), part.offset(), part.total(), part.last(),
                 part.remaining(), part.data().length, text, truncated(text, part.data().length));
+    }
+
+    private static Messages.TlsDetails tls(TlsHandshake handshake) {
+        TlsHandshake.ClientHello c = handshake.clientHello();
+        TlsHandshake.ServerHello s = handshake.serverHello();
+        TlsHandshake.QuantumSafety q = handshake.quantumSafety();
+        return new Messages.TlsDetails(
+                c == null ? null : new Messages.ClientHelloDetails(c.serverName(), c.protocols(), c.versions(), c.cipherSuites(),
+                        c.groups(), c.keyShares(), c.signatureAlgorithms(), c.postQuantumGroups(), c.truncated()),
+                s == null ? null : new Messages.ServerHelloDetails(s.version(), s.cipherSuite(), s.keyShareGroup(),
+                        s.retryRequest(), s.truncated()),
+                q == null ? null : new Messages.QuantumSafety(q.safe(), q.reason()));
     }
 
     private static boolean truncated(String text, int bodyLength) {

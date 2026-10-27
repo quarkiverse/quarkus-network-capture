@@ -76,7 +76,7 @@ class RedactionTest {
         Messages.BodyPartDetails part = new Messages.BodyPartDetails(true, "GET /x?access_token=t HTTP/1.1", true, 0, 10,
                 false, 5, 5, "hello", false);
         Messages.PacketRow row = redaction.apply(new Messages.PacketRow(2, "0.000000", "lo", "127.0.0.1:2", "127.0.0.1:1",
-                "HTTP", 70, "Chunk of GET /x?access_token=t HTTP/1.1: hello", part, null, false));
+                "HTTP", 70, "Chunk of GET /x?access_token=t HTTP/1.1: hello", part, null, null, false));
         assertEquals("GET /x?access_token=[redacted] HTTP/1.1", ((Messages.BodyPartDetails) row.http()).message());
         assertEquals("Chunk of GET /x?access_token=[redacted] HTTP/1.1: hello", row.info());
     }
@@ -88,9 +88,20 @@ class RedactionTest {
     }
 
     @Test
+    void tlsDetailsPassThroughUntouched() {
+        Messages.TlsDetails tls = new Messages.TlsDetails(null,
+                new Messages.ServerHelloDetails("TLS 1.3", "TLS_AES_128_GCM_SHA256", "x25519", false, false),
+                new Messages.QuantumSafety(false, "not quantum safe: the server chose x25519"));
+        Messages.PacketRow original = new Messages.PacketRow(1, "0.000000", "lo", "127.0.0.1:8443", "127.0.0.1:2", "HTTPS", 120,
+                "Server Hello (TLS 1.3, TLS_AES_128_GCM_SHA256, key share x25519); not quantum safe: the server chose x25519",
+                null, tls, null, false);
+        assertEquals(original, redaction.apply(original));
+    }
+
+    @Test
     void rowsWithoutHttpKeepTheirSummary() {
         Messages.PacketRow original = new Messages.PacketRow(1, "0.000000", "lo", "127.0.0.1:1", "127.0.0.1:2", "TCP", 60,
-                "1 → 2 [SYN]", null, null, false);
+                "1 → 2 [SYN]", null, null, null, false);
         assertEquals(original, redaction.apply(original));
     }
 
@@ -98,7 +109,7 @@ class RedactionTest {
         String requestLine = "GET " + target + " HTTP/1.1";
         Messages.MessageDetails http = new Messages.MessageDetails(true, "GET", "http://localhost" + target, target,
                 "HTTP/1.1", 0, null, List.of(headers), 0, 0, true, null, false);
-        return new Messages.PacketRow(1, "0.000000", "lo", "127.0.0.1:1", "127.0.0.1:2", "HTTP", 100, requestLine, http,
+        return new Messages.PacketRow(1, "0.000000", "lo", "127.0.0.1:1", "127.0.0.1:2", "HTTP", 100, requestLine, http, null,
                 new Messages.ExchangeRef(1, requestLine, true, null), false);
     }
 

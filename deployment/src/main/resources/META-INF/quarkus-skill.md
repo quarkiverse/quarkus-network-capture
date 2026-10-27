@@ -24,6 +24,15 @@
 - `start(applicationOnly, excludeDevUi, interfaces)` → exercise the application → `packets(after, onlyHttp, max)` →
   `stop()`. Packets carrying HTTP/1.x come with method, URL, status, headers and decoded body, and each response
   links to its request, so a capture answers "what exactly did the application send and receive".
+- **Is the TLS quantum safe?** Capture a TLS connection and look at its Server Hello packet: `tls.quantumSafety.safe`
+  is true when the server chose a post-quantum key share group (ML-KEM, e.g. `X25519MLKEM768`) in TLS 1.3, and
+  `tls.quantumSafety.reason` says why not otherwise: `the client offered X25519MLKEM768 but the server chose x25519`
+  (the server is not configured for it), `the client offered no post-quantum group and the server chose x25519`
+  (the client is not), or `TLS 1.2 has no post-quantum key exchange`. The Client Hello packet has what the client
+  offered under `tls.clientHello` (`groups`, `keyShares`, `postQuantumGroups`), the Server Hello what was chosen
+  under `tls.serverHello` (`version`, `cipherSuite`, `keyShareGroup`). In Quarkus, `quarkus.tls.key-exchange-groups`
+  and `quarkus.tls.pqc-enforcement-policy` control this for the server and the clients Quarkus configures; see the
+  TLS registry guide. The verdict only covers the key exchange: certificates and signatures are classical.
 - `start` never runs the privileged helper. A result of `permission-required` means the application lacks the
   capture privilege: ask the user to press **Start capture** on the Network Capture page of the Dev UI (which can
   prompt for their password), or to run the one-time command in `setupHint`, then call `status` or `start` again.
@@ -43,6 +52,8 @@
 - Do NOT look for packets of a request made in the last second right away: packets are held briefly so the
   application-only filter can learn about new sockets; `packets` returns them a moment later.
 - Do NOT expect HTTP/2 or TLS bodies to be decoded; HTTP/2 shows frame types, TLS shows only the record types plus
-  the server name and ALPN from the Client Hello. `HTTPS` means TLS whose Client Hello offered HTTP, or TLS on port
-  443 or 8443 without ALPN; other TLS shows as `TLS`.
+  the Client Hello and Server Hello (server name, ALPN, versions, cipher suites, key exchange groups). `HTTPS`
+  means TLS whose Client Hello offered HTTP, or TLS on port 443 or 8443 without ALPN; other TLS shows as `TLS`.
+- A Server Hello that is a `Hello Retry Request` carries no verdict: the server is asking the client for a key share
+  of another group, and the Server Hello that follows the second Client Hello decides.
 - Do NOT run the application itself as root to avoid the prompt; grant the capability to the JDK instead.
