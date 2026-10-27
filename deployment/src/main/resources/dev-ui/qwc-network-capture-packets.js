@@ -59,6 +59,21 @@ export class QwcNetworkCapturePackets extends LitElement {
             color: var(--lumo-secondary-text-color);
             white-space: nowrap;
         }
+        .badge {
+            display: inline-block;
+            padding: 1px 8px;
+            border-radius: var(--lumo-border-radius-m);
+            font-size: var(--lumo-font-size-xs);
+            font-weight: 600;
+            white-space: nowrap;
+            color: var(--lumo-primary-contrast-color);
+        }
+        .badge.safe {
+            background: var(--lumo-success-color);
+        }
+        .badge.unsafe {
+            background: var(--lumo-error-color);
+        }
         .details pre {
             margin: 0;
             max-height: 300px;
@@ -173,7 +188,7 @@ export class QwcNetworkCapturePackets extends LitElement {
                 <vaadin-grid-column header="Protocol" path="protocol" width="90px" flex-grow="0"></vaadin-grid-column>
                 <vaadin-grid-column header="Length" path="length" width="80px" flex-grow="0"></vaadin-grid-column>
                 <vaadin-grid-column header="Exchange" width="90px" flex-grow="0" ${columnBodyRenderer(p => this._renderExchangeCell(p), [])}></vaadin-grid-column>
-                <vaadin-grid-column header="Info" path="info"></vaadin-grid-column>
+                <vaadin-grid-column header="Info" ${columnBodyRenderer(p => this._renderInfoCell(p), [])}></vaadin-grid-column>
             </vaadin-grid>
             ${this._selected ? this._renderDetails(this._selected) : html`<span class="muted">Click a packet to see its details.</span>`}
         `;
@@ -193,6 +208,15 @@ export class QwcNetworkCapturePackets extends LitElement {
                 : html`<span class="muted">→ …</span>`;
         }
         return x.requestNo ? html`<span class="link" @click=${e => { e.stopPropagation(); this._jumpTo(x.requestNo); }}>↩ #${x.requestNo}</span>` : html``;
+    }
+
+    // The Server Hello row wears the verdict on its key exchange; the other rows of the connection carry it in their details
+    _renderInfoCell(p) {
+        return html`${p.tls?.serverHello && p.tls.quantumSafety ? this._renderVerdictBadge(p.tls.quantumSafety) : ''}${p.info}`;
+    }
+
+    _renderVerdictBadge(q) {
+        return html`<span class="badge ${q.safe ? 'safe' : 'unsafe'}">${q.safe ? 'Quantum safe' : 'Not quantum safe'}</span> `;
     }
 
     _renderExchangeLine(p) {
@@ -236,12 +260,48 @@ export class QwcNetworkCapturePackets extends LitElement {
                     <table>${h.headers.map(x => html`<tr><td>${x.name}</td><td>${x.value}</td></tr>`)}</table>`}
                     <h4>Body <span class="muted">${this._bodyNote(h)}</span></h4>
                     ${h.bodyBytes === 0 ? '' : this._renderBody(h)}
-                ` : html`<span class="muted">${p.info}${p.protocol === 'HTTP2'
+                ` : p.tls ? this._renderTls(p) : html`<span class="muted">${p.info}${p.protocol === 'HTTP2'
                     ? html`<br>HTTP/2 headers are compressed on the wire, so only frame types can be shown.`
                     : p.protocol === 'HTTPS' || p.protocol === 'TLS'
-                    ? html`<br>TLS traffic is encrypted, so only the record types and the server name from the Client Hello can be shown.`
+                    ? html`<br>TLS traffic is encrypted, so only the record types and the Client Hello and Server Hello can be shown.`
                     : html`<br>Headers and body are shown for HTTP/1.x messages.`}</span>`}
             </div>
+        `;
+    }
+
+    /** The handshake details of a TLS packet, the verdict on the key exchange first. */
+    _renderTls(p) {
+        const t = p.tls;
+        const c = t.clientHello;
+        const s = t.serverHello;
+        const q = t.quantumSafety;
+        const list = values => values.length === 0 ? html`<span class="muted">none</span>` : values.join(', ');
+        return html`
+            <span class="muted">${p.info}</span>
+            ${q ? html`<div class="row">${this._renderVerdictBadge(q)}<span>${q.reason}${s ? '' : ', decided by the Server Hello of this connection'}.</span></div>` : ''}
+            ${c ? html`
+                <span>${c.postQuantumGroups.length > 0
+                    ? html`The client offered the post-quantum group${c.postQuantumGroups.length > 1 ? 's' : ''} <strong>${c.postQuantumGroups.join(', ')}</strong>; the Server Hello of this connection shows whether the server picked one.`
+                    : html`The client offered <strong>no post-quantum group</strong>, so this connection cannot have a quantum-safe key exchange.`}</span>
+                <h4>Client Hello ${c.truncated ? html`<span class="muted">(cut by the packet, the lists may be incomplete)</span>` : ''}</h4>
+                <table>
+                    <tr><td>Server name</td><td>${c.serverName ?? html`<span class="muted">none</span>`}</td></tr>
+                    <tr><td>ALPN</td><td>${list(c.protocols)}</td></tr>
+                    <tr><td>Versions</td><td>${list(c.versions)}</td></tr>
+                    <tr><td>Key shares</td><td>${list(c.keyShares)}</td></tr>
+                    <tr><td>Supported groups</td><td>${list(c.groups)}</td></tr>
+                    <tr><td>Cipher suites</td><td>${list(c.cipherSuites)}</td></tr>
+                    <tr><td>Signature algorithms</td><td>${list(c.signatureAlgorithms)}</td></tr>
+                </table>` : ''}
+            ${s ? html`
+                <h4>${s.retryRequest ? 'Hello Retry Request' : 'Server Hello'} ${s.truncated ? html`<span class="muted">(cut by the packet)</span>` : ''}</h4>
+                <table>
+                    <tr><td>Version</td><td>${s.version ?? html`<span class="muted">unknown</span>`}</td></tr>
+                    <tr><td>Cipher suite</td><td>${s.cipherSuite ?? html`<span class="muted">unknown</span>`}</td></tr>
+                    <tr><td>${s.retryRequest ? 'Asks for key share' : 'Key share'}</td><td>${s.keyShareGroup ?? html`<span class="muted">none</span>`}</td></tr>
+                </table>
+                ${s.retryRequest ? html`<span class="muted">The client sent no key share for this group; its next Client Hello will, and the Server Hello that follows decides.</span>` : ''}` : ''}
+            ${!c && !s ? html`<span class="muted">TLS traffic is encrypted; the handshake details are on the Client Hello and Server Hello packets of this connection.</span>` : ''}
         `;
     }
 

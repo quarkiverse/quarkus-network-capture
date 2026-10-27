@@ -65,11 +65,13 @@ public final class Messages {
 
     /**
      * @param http details of an HTTP/1.x message or body part, or null
+     * @param tls details of a TLS handshake packet, or the key exchange verdict alone on a later packet of a TLS
+     *        connection, or null
      * @param exchange the request/response pairing, or null
      * @param devUi whether the packet belongs to the Dev UI's own traffic
      */
     public record PacketRow(long no, String time, String interfaceName, String source, String destination, String protocol,
-            int length, String info, HttpDetails http, ExchangeRef exchange, boolean devUi) {
+            int length, String info, HttpDetails http, TlsDetails tls, ExchangeRef exchange, boolean devUi) {
     }
 
     public sealed interface HttpDetails permits MessageDetails, BodyPartDetails {
@@ -87,6 +89,40 @@ public final class Messages {
     }
 
     public record Header(String name, String value) {
+    }
+
+    /**
+     * @param clientHello the Client Hello the packet starts with, or null
+     * @param serverHello the Server Hello the packet starts with, or null
+     * @param quantumSafety whether the connection's key exchange is post-quantum, decided by the Server Hello; null
+     *        on a Client Hello and until the Server Hello was seen
+     */
+    public record TlsDetails(ClientHelloDetails clientHello, ServerHelloDetails serverHello, QuantumSafety quantumSafety) {
+    }
+
+    /**
+     * What the client offered; names are the IANA names, unknown code points are hex.
+     *
+     * @param postQuantumGroups the ML-KEM groups among the supported groups, empty when the client offered none
+     * @param truncated whether the hello was cut by the packet, so lists may be incomplete
+     */
+    public record ClientHelloDetails(String serverName, List<String> protocols, List<String> versions, List<String> cipherSuites,
+            List<String> groups, List<String> keyShares, List<String> signatureAlgorithms, List<String> postQuantumGroups,
+            boolean truncated) {
+    }
+
+    /**
+     * What the server chose.
+     *
+     * @param keyShareGroup the key exchange group of the connection; null in TLS 1.2 or when the hello was cut
+     * @param retryRequest whether this is a Hello Retry Request, which asks the client for a key share of keyShareGroup
+     */
+    public record ServerHelloDetails(String version, String cipherSuite, String keyShareGroup, boolean retryRequest,
+            boolean truncated) {
+    }
+
+    // The verdict on a connection's key exchange, with a one sentence reason to show as is.
+    public record QuantumSafety(boolean safe, String reason) {
     }
 
     /**

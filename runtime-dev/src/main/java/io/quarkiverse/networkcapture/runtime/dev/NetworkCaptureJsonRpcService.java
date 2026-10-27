@@ -186,7 +186,11 @@ public class NetworkCaptureJsonRpcService {
     @JsonRpcDescription("Packets of the running or last capture, oldest first, without the Dev UI's own traffic. Each "
             + "packet has a number, time, addresses, protocol and a one-line summary; packets carrying HTTP/1.x also have "
             + "the method, URL, status, headers and body (decoded, chunking removed) and a link to the matching request or "
-            + "response. Credential headers such as Authorization and Cookie, and credential query parameters such as "
+            + "response. TLS handshake packets have the Client Hello (versions, cipher suites, key exchange groups and key "
+            + "shares offered, SNI, ALPN) or Server Hello (version, cipher suite and key share group chosen) under 'tls', "
+            + "and the Server Hello carries 'tls.quantumSafety': whether the key exchange is post-quantum (an ML-KEM "
+            + "group such as X25519MLKEM768) with the reason when it is not. "
+            + "Credential headers such as Authorization and Cookie, and credential query parameters such as "
             + "access_token, are redacted. Returns at most 'max' packets "
             + "after packet number 'after'; to page, pass the last number received")
     public Messages.PacketBatch packets(

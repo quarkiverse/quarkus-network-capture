@@ -13,7 +13,7 @@ import io.quarkiverse.networkcapture.LinkType;
  * <a href="https://www.rfc-editor.org/rfc/rfc792">RFC 792</a> (ICMP);
  * <a href="https://www.rfc-editor.org/rfc/rfc4443">RFC 4443</a> (ICMPv6);
  * {@link HttpMessage} for HTTP/1.x and {@link Http2Frames} for HTTP/2, both recognised at the start of a TCP
- * segment's payload; {@link TlsRecords} for TLS, whose records are shown but whose content cannot be. TLS is
+ * segment's payload; {@link TlsRecords} for TLS, whose records and hellos are shown but whose content cannot be. TLS is
  * reported as {@code HTTPS} when the Client Hello offers HTTP through ALPN, or offers nothing and the connection
  * uses a well known HTTPS port, and as {@code TLS} otherwise.
  *
@@ -26,10 +26,11 @@ import io.quarkiverse.networkcapture.LinkType;
  * @param http the parsed HTTP/1.x message when the packet starts one, otherwise null
  * @param httpBody a later part of an HTTP/1.x body, only produced by {@link HttpStreamDecoder}, otherwise null
  * @param exchange the request/response pairing, only produced by {@link HttpStreamDecoder}, otherwise null
- * @param tls the parsed Client Hello when the packet starts one, otherwise null
+ * @param tls the TLS handshake details when the packet starts a Client Hello or Server Hello, and the key exchange
+ *        verdict on any later packet of a TLS connection, only produced by {@link HttpStreamDecoder}; otherwise null
  */
 public record PacketSummary(String source, String destination, String protocol, String info, int sourcePort,
-        int destinationPort, HttpMessage http, HttpBodyPart httpBody, HttpExchange exchange, TlsRecords.Hello tls) {
+        int destinationPort, HttpMessage http, HttpBodyPart httpBody, HttpExchange exchange, TlsHandshake tls) {
 
     public PacketSummary(String source, String destination, String protocol, String info, int sourcePort,
             int destinationPort) {
@@ -111,24 +112,11 @@ public record PacketSummary(String source, String destination, String protocol, 
         }
         TlsRecords.Summary tls = TlsRecords.describe(d, s.payloadOffset(), s.payloadLength());
         if (tls != null) {
-            TlsRecords.Hello hello = tls.hello();
+            TlsHandshake.ClientHello hello = tls.handshake() == null ? null : tls.handshake().clientHello();
             boolean https = hello != null && !hello.protocols().isEmpty() ? hello.http()
                     : httpsPort(s.sourcePort(), s.destinationPort());
-            String info = tls.info();
-            if (hello != null) {
-                List<String> details = new ArrayList<>();
-                if (hello.serverName() != null) {
-                    details.add("SNI=" + hello.serverName());
-                }
-                if (!hello.protocols().isEmpty()) {
-                    details.add("ALPN=" + String.join(", ", hello.protocols()));
-                }
-                if (!details.isEmpty()) {
-                    info += " (" + String.join(", ", details) + ")";
-                }
-            }
-            return new PacketSummary(source, destination, https ? "HTTPS" : "TLS", info, s.sourcePort(), s.destinationPort(),
-                    null, null, null, hello);
+            return new PacketSummary(source, destination, https ? "HTTPS" : "TLS", tls.info(), s.sourcePort(), s.destinationPort(),
+                    null, null, null, tls.handshake());
         }
         List<String> names = new ArrayList<>();
         if ((s.flags() & TransportSegment.SYN) != 0) names.add("SYN");

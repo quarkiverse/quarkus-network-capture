@@ -4,6 +4,7 @@ import static io.quarkiverse.networkcapture.TestPackets.clientHello;
 import static io.quarkiverse.networkcapture.TestPackets.concat;
 import static io.quarkiverse.networkcapture.TestPackets.ethernet;
 import static io.quarkiverse.networkcapture.TestPackets.ipv4;
+import static io.quarkiverse.networkcapture.TestPackets.serverHello;
 import static io.quarkiverse.networkcapture.TestPackets.tcp;
 import static io.quarkiverse.networkcapture.TestPackets.tlsRecord;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -53,6 +54,7 @@ class HttpStreamDecoderTest {
         PacketSummary reply = tls(SERVER, 8443, CLIENT, 50000, tlsRecord(0x16, new byte[] { 2, 0, 0, 4, 3, 3, 0, 0 }), 0x18);
         assertEquals("HTTPS", reply.protocol());
         assertEquals("Server Hello (localhost)", reply.info());
+        assertNull(reply.tls().quantumSafety()); // cut hello
 
         // a segment starting in the middle of a record
         PacketSummary middle = tls(SERVER, 8443, CLIENT, 50000, new byte[] { 0x42, 0x42, 0x42 }, 0x18);
@@ -170,4 +172,35 @@ class HttpStreamDecoderTest {
         fromServer("", 0x11); // FIN
         assertNull(fromServer("3\r\nabc\r\n", 0x18).httpBody());
     }
+
+    @Test
+    void quantumSafetyVerdictKnowsWhatTheClientOffered() {
+        tls(CLIENT, 50000, SERVER, 8443, clientHello().serverName("api").groups(0x11EC, 0x1D).keyShares(0x11EC, 0x1D).build(), 0x18);
+        PacketSummary reply = tls(SERVER, 8443, CLIENT, 50000,
+                serverHello().versions(0x0304).cipherSuites(0x1301).keyShares(0x1D).build(), 0x18);
+        assertEquals("Server Hello (TLS 1.3, TLS_AES_128_GCM_SHA256, key share x25519)"
+                + "; not quantum safe: the client offered X25519MLKEM768 but the server chose x25519 (api)", reply.info());
+        assertFalse(reply.tls().quantumSafety().safe());
+
+        // the rest of the connection carries the verdict, so any of its packets can show it
+        PacketSummary data = tls(SERVER, 8443, CLIENT, 50000, new byte[] { 0x17, 3, 3, 0, 1, 0x42 }, 0x18);
+        assertEquals("Application Data (api)", data.info());
+        assertEquals(reply.tls().quantumSafety(), data.tls().quantumSafety());
+        assertNull(data.tls().serverHello());
+
+        // a client that offered no post-quantum group
+        tls(CLIENT, 50001, SERVER, 8443, clientHello().groups(0x1D, 0x17).keyShares(0x1D).build(), 0x18);
+        PacketSummary classical = tls(SERVER, 8443, CLIENT, 50001,
+                serverHello().versions(0x0304).cipherSuites(0x1301).keyShares(0x1D).build(), 0x18);
+        assertEquals("not quantum safe: the client offered no post-quantum group and the server chose x25519",
+                classical.tls().quantumSafety().reason());
+
+        // a safe one
+        tls(CLIENT, 50002, SERVER, 8443, clientHello().groups(0x11EC, 0x1D).keyShares(0x11EC).build(), 0x18);
+        PacketSummary safe = tls(SERVER, 8443, CLIENT, 50002,
+                serverHello().versions(0x0304).cipherSuites(0x1301).keyShares(0x11EC).build(), 0x18);
+        assertTrue(safe.tls().quantumSafety().safe());
+        assertEquals("quantum-safe key exchange", safe.tls().quantumSafety().reason());
+    }
+
 }
