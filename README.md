@@ -18,7 +18,7 @@ It works on Linux and macOS, needs Java 25, and does not need libpcap or any nat
    <dependency>
        <groupId>io.quarkiverse.networkcapture</groupId>
        <artifactId>quarkus-network-capture</artifactId>
-       <version>1.0.0-SNAPSHOT</version>
+       <version>${quarkus-network-capture.version}</version>
    </dependency>
    ```
 
