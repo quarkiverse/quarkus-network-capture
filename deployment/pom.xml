@@ -4,7 +4,7 @@
     <parent>
         <groupId>io.quarkiverse.networkcapture</groupId>
         <artifactId>quarkus-network-capture-parent</artifactId>
-        <version>999-SNAPSHOT</version>
+        <version>0.1.2</version>
     </parent>
 
     <artifactId>quarkus-network-capture-deployment</artifactId>
